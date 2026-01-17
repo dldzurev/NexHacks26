@@ -1,36 +1,53 @@
-# brain.py
 import os
 import warnings
-# Suppress all FutureWarnings (including the google.generativeai deprecation)
-warnings.filterwarnings("ignore", category=FutureWarning)
 import google.generativeai as genai
-from google.generativeai.types import FunctionDeclaration, Tool
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# --- NEW IMPORTS ---
+from tools_files import file_tools
+from tools_jira import jira_tools
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 load_dotenv()
 
-# 1. SETUP: Configure the API Key from environment variable
-# Get the API key from environment variable (set in .env file)
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    raise ValueError("GEMINI_API_KEY not found in environment variables. Please set it in .env file.")
+    raise ValueError("GEMINI_API_KEY not found in .env file.")
 genai.configure(api_key=api_key)
 
-# 2. INITIALIZE: Connect to the specific model
-# Try 'gemini-pro' or 'gemini-1.5-pro' if 'gemini-1.5-flash-latest' doesn't work
-model = genai.GenerativeModel('gemini-flash-latest')
+# 1. COMBINE TOOLS
+# We merge the lists so the model sees all capabilities
+all_tools = file_tools + jira_tools
 
-def ask_gemini(user_message):
+# 2. INITIALIZE WITH TOOLS
+# We pass the 'tools' list to the model
+model = genai.GenerativeModel(
+    model_name='gemini-flash-latest', # switched to stable flash version
+    tools=all_tools
+)
+
+def agent_chat(user_message):
     """
-    A simple function to send text to Gemini and return the text reply.
+    Starts a chat session that can use tools.
     """
+    # enable_automatic_function_calling=True makes Gemini run the Python functions for you!
+    chat = model.start_chat(enable_automatic_function_calling=True)
+    
     try:
-        response = model.generate_content(user_message)
+        response = chat.send_message(user_message)
         return response.text
     except Exception as e:
-        return f"Error contacting Brain: {e}"
+        return f"Agent Error: {e}"
 
-# TEST BLOCK (Only runs if you type 'python brain.py')
+# TEST BLOCK
 if __name__ == "__main__":
-    print(ask_gemini("Hello! Are you online?"))
+    print("--- Testing ContextLink Agent ---")
+    
+    # This query tests BOTH tools:
+    # 1. It has to look up JIRA-123 (Jira Tool)
+    # 2. It sees the ticket mentions 'auth.py', so it has to look for that file (File Tool)
+    query = "Check JIRA-123 and tell me if the file mentioned in the description exists in my folder."
+    
+    #print(f"User: {query}")
+    #print("Agent thinking...")
+    print(f"Agent: {agent_chat(query)}")
