@@ -322,11 +322,11 @@ function getWebviewHtml(): string {
     
     .loading-diff { padding: 20px; color: var(--muted); text-align: center; font-style: italic; }
     .data-card { background: rgba(30, 35, 45, 0.6); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
-    .jira-row { display: flex; align-items: flex-start; margin-bottom: 8px; color: rgba(255,255,255,0.9); border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; }
+    .jira-row { display: flex; align-items: flex-start; margin-bottom: 36px; color: rgba(255,255,255,0.9); border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 24px; }
     .jira-bullet { margin-right: 8px; color: var(--accent); font-weight: bold; }
-    .confluence-row { display: flex; align-items: flex-start; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; }
+    .confluence-row { display: flex; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px; }
     .confluence-link { color: var(--accent); text-decoration: none; font-weight: 600; }
-    .slack-container { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .slack-container { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); }
     .slack-header { font-size: 0.9em; color: var(--accent); margin-bottom: 4px; font-weight: 700; opacity: 0.95; }
     
     .banner { align-self: center; width: 100%; color: var(--accent); margin-bottom: 10px; opacity: 0.9; }
