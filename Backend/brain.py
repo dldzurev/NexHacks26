@@ -61,96 +61,95 @@ if __name__ == "__main__":
     print(f"Agent: {agent_chat(query)}")
 '''
 import os
-import warnings
-import google.generativeai as genai
+import time
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 # --- TOOL IMPORTS ---
-from tools_files import file_tools
-from tools_jira import jira_tools
-# from tools_slack import slack_tools 
+from tools_files import list_files, read_all_code_files
+from tools_jira import jira_tools 
 
-warnings.filterwarnings("ignore", category=FutureWarning)
 load_dotenv()
 
-# 1. CONFIGURE API
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found in .env file.")
-genai.configure(api_key=api_key)
+# 1. INITIALIZE CLIENT
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# 2. COMBINE TOOLS
-all_tools = file_tools + jira_tools 
+# 2. PREPARE TOOLS
+my_tools = [list_files, read_all_code_files] + jira_tools
 
-# --- SELF-HEALING MODEL SELECTOR ---
-def get_working_model_name():
-    """
-    Dynamically finds a model that YOUR api key is allowed to use.
-    """
-    print("🔍 Scanning for available Gemini models...")
-    try:
-        for m in genai.list_models():
-            # We need a model that supports 'generateContent'
-            if 'generateContent' in m.supported_generation_methods:
-                # Prefer Flash if available (it's faster)
-                if 'flash' in m.name:
-                    return m.name
-                # Fallback to Pro
-                if 'pro' in m.name:
-                    return m.name
-        
-        # If we didn't find a specific preference, just take the first valid one
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return m.name
-                
-    except Exception as e:
-        print(f"❌ Error listing models: {e}")
-        return 'models/gemini-1.5-flash' # Last resort fallback
-
-# 3. INITIALIZE MODEL
-valid_model_name = get_working_model_name()
-print(f"✅ CONNECTED TO MODEL: {valid_model_name}")
-
-model = genai.GenerativeModel(
-    model_name=valid_model_name,
-    tools=all_tools
-)
-
-# 4. INITIALIZE CHAT SESSION (GLOBAL MEMORY)
-try:
-    chat_session = model.start_chat(enable_automatic_function_calling=True)
-except Exception as e:
-    print(f"⚠️ Initial Chat Error: {e}")
-    chat_session = None
+# 3. GLOBAL MEMORY
+chat_history = []
 
 def agent_chat(user_message):
-    """
-    Sends a message to the existing chat session.
-    """
-    global chat_session
-    
-    # If the session crashed or wasn't made, try to recreate it
-    if chat_session is None:
-        chat_session = model.start_chat(enable_automatic_function_calling=True)
+    global chat_history
 
-    try:
-        response = chat_session.send_message(user_message)
-        for chunk in response:
-                    if chunk.text:
-                        yield chunk.text  # Send pieces as they arrive
-    except Exception as e:
-        print(f"⚠️ Chat Error: {e}. Restarting memory...")
-        chat_session = model.start_chat(enable_automatic_function_calling=True)
+    # Add User's message to history
+    chat_history.append(types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=user_message)]
+    ))
+
+    # Config
+    generate_config = types.GenerateContentConfig(
+        tools=my_tools,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=False,
+            maximum_remote_calls=15
+        ),
+        temperature=0.7
+    )
+
+    # --- RETRY LOOP FOR 503 ERRORS ---
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            response = chat_session.send_message(user_message)
-            for chunk in response:
-                            if chunk.text:
-                                yield chunk.text
-        except Exception as e2:
-            yield f"Agent Error: {e2}"
+            response = client.models.generate_content(
+                model="gemini-3-flash-preview", 
+                contents=chat_history,
+                config=generate_config
+            )
+
+            # Success!
+            response_text = response.text
+            
+            if response_text:
+                chat_history.append(types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=response_text)]
+                ))
+                yield response_text
+            else:
+                yield "✅ Task completed."
+            
+            return # Exit function on success
+
+        except Exception as e:
+            error_msg = str(e)
+            
+            # CHECK FOR 503 (Overloaded) OR 429 (Quota)
+            if "503" in error_msg or "overloaded" in error_msg.lower():
+                print(f"⚠️ Google Server Busy (503). Retrying {attempt+1}/{max_retries}...")
+                time.sleep(3) # Wait 3 seconds
+                continue # Try again
+            
+            elif "429" in error_msg:
+                print(f"⚠️ Quota hit. Waiting 10s...")
+                time.sleep(10)
+                # Let loop retry
+                continue 
+            
+            else:
+                # Real crash
+                print(f"❌ Error: {error_msg}")
+                yield f"⚠️ Agent Error: {error_msg}"
+                return
+
+    # If we exit the loop, we failed 3 times
+    yield "❌ Servers are too busy right now. Please try again in a minute."
 
 # TEST BLOCK
 if __name__ == "__main__":
-    print("--- Testing ContextLink Agent ---")
-    print(f"Agent: {agent_chat('Hello, are you working?')}")
+    print("--- Testing New GenAI Client ---")
+    for chunk in agent_chat("Hello"):
+        print(chunk)
