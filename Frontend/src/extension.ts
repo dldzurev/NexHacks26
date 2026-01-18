@@ -4,6 +4,14 @@ import * as path from "path";
 const CHAT_VIEW_ID = "nexhacks26.chatView";
 const CONTAINER_ID = "nexhacks26Container";
 
+// Create a decoration type for the "Real-Time" highlighting in the actual editor
+const changeHighlightDecoration = vscode.window.createTextEditorDecorationType({
+    backgroundColor: 'rgba(34, 197, 94, 0.15)', // Light Green background
+    isWholeLine: true,
+    overviewRulerColor: 'rgba(34, 197, 94, 0.7)',
+    overviewRulerLane: vscode.OverviewRulerLane.Left
+});
+
 export function activate(context: vscode.ExtensionContext) {
   const provider = new NexHacksChatViewProvider(context);
 
@@ -29,45 +37,99 @@ class NexHacksChatViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = getWebviewHtml();
 
-    // --- LISTENER: Handle clicks from the Webview ---
+    // --- LISTENER: Handle messages from the Webview ---
     webviewView.webview.onDidReceiveMessage(async (data) => {
+      
+      // 1. GET FILE CONTEXT (For Diff Calculation)
+      if (data.command === 'get_file_context') {
+        const rootPath = this.getRootPath();
+        if (!rootPath) {
+            webviewView.webview.postMessage({ command: 'file_context', id: data.id, content: null });
+            return;
+        }
+
+        const targetUri = vscode.Uri.file(path.join(rootPath, data.path));
+        try {
+            const fileData = await vscode.workspace.fs.readFile(targetUri);
+            webviewView.webview.postMessage({ 
+                command: 'file_context', 
+                id: data.id, 
+                content: fileData.toString() 
+            });
+        } catch (e) {
+            webviewView.webview.postMessage({ command: 'file_context', id: data.id, content: "" });
+        }
+      }
+
+      // 2. HIGHLIGHT IN EDITOR (Visual feedback in the actual file)
+      if (data.command === 'highlight_editor') {
+          const rootPath = this.getRootPath();
+          if (!rootPath) return;
+
+          const targetUri = vscode.Uri.file(path.join(rootPath, data.path));
+          
+          // Find the visible editor for this file
+          const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === targetUri.toString());
+          
+          if (editor) {
+              const startLine = data.startLine;
+              const endLine = data.endLine;
+              
+              // Create range (VS Code lines are 0-indexed)
+              // If it's an insertion (start > end), just highlight the start line
+              const range = new vscode.Range(
+                  new vscode.Position(startLine, 0),
+                  new vscode.Position(Math.max(startLine, endLine), 1000)
+              );
+              
+              editor.setDecorations(changeHighlightDecoration, [range]);
+              
+              // Optional: Reveal the range so the user sees it
+              editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+          }
+      }
+
+      // 3. APPLY FILE (Write to Disk)
       if (data.command === 'apply_file') {
         try {
-            let rootPath: string | undefined;
-
-            // 1. Determine the Root Path
-            if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-                rootPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-            } else if (vscode.window.activeTextEditor) {
-                rootPath = path.dirname(vscode.window.activeTextEditor.document.uri.fsPath);
-            }
-
+            const rootPath = this.getRootPath();
             if (!rootPath) {
-                vscode.window.showErrorMessage("NexHacks: Please Open a Folder so I know where to save the file.");
+                vscode.window.showErrorMessage("Context Co: Please Open a Folder so I know where to save the file.");
                 return;
             }
     
             const filePath = data.path; 
             const newContent = data.content;
             
-            // 2. Resolve the absolute path to the file
             const targetUri = vscode.Uri.file(path.join(rootPath, filePath));
     
-            // 3. WRITE DIRECTLY TO DISK (Replaces the Diff logic)
-            // We use Buffer.from to convert the string to the byte array VS Code expects
             await vscode.workspace.fs.writeFile(targetUri, Buffer.from(newContent, 'utf8'));
 
-            // 4. Open the file so you can see the result immediately
             const doc = await vscode.workspace.openTextDocument(targetUri);
             await vscode.window.showTextDocument(doc);
+            
+            // Clear decorations after apply
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document.uri.toString() === targetUri.toString()) {
+                editor.setDecorations(changeHighlightDecoration, []);
+            }
             
             vscode.window.showInformationMessage(`Successfully updated ${filePath}`);
 
         } catch (e: any) {
-            vscode.window.showErrorMessage(`NexHacks Error: ${e.message}`);
+            vscode.window.showErrorMessage(`Context Co Error: ${e.message}`);
         }
       }
     });
+  }
+
+  private getRootPath(): string | undefined {
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        return vscode.workspace.workspaceFolders[0].uri.fsPath;
+    } else if (vscode.window.activeTextEditor) {
+        return path.dirname(vscode.window.activeTextEditor.document.uri.fsPath);
+    }
+    return undefined;
   }
 }
 
@@ -88,22 +150,22 @@ function getWebviewHtml(): string {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NexHacks Chat</title>
+  <title>Context Co. Chat</title>
 
   <style>
-    /* VS CODE THEME INTEGRATION VARIABLES */
     :root {
-      --bg: #0b0f17;
-      --panel: rgba(18, 22, 34, 0.78);
-      --border: rgba(255,255,255,0.10);
-      --border2: rgba(255,255,255,0.14);
-      --text: rgba(255,255,255,0.92);
-      --muted: rgba(255,255,255,0.70);
+      --bg: var(--vscode-editor-background); 
+      --panel: var(--vscode-sideBar-background);
+      --border: var(--vscode-panel-border);
+      --text: var(--vscode-editor-foreground);
+      --muted: rgba(255,255,255,0.60);
+      
       --accent: #7dd3fc;
       --accentBg: rgba(125,211,252,0.18);
       --accentBorder: rgba(125,211,252,0.35);
-      --cardBg: rgba(30, 35, 45, 0.6);
-      --cardBorder: rgba(255, 255, 255, 0.15);
+      
+      --diff-bg: rgba(34, 197, 94, 0.15); 
+      --diff-border: rgba(34, 197, 94, 0.5);
     }
 
     body {
@@ -111,10 +173,7 @@ function getWebviewHtml(): string {
       height: 100vh;
       overflow: hidden;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      background:
-        radial-gradient(1200px 600px at 70% -10%, rgba(56,189,248,0.12), transparent 55%),
-        radial-gradient(900px 500px at 15% 0%, rgba(125,211,252,0.08), transparent 60%),
-        var(--bg);
+      background-color: var(--bg);
       color: var(--text);
     }
 
@@ -122,11 +181,8 @@ function getWebviewHtml(): string {
       height: 100vh;
       display: flex;
       flex-direction: column;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
+      background: var(--bg);
       overflow: hidden;
-      backdrop-filter: blur(14px);
     }
 
     #header {
@@ -137,6 +193,7 @@ function getWebviewHtml(): string {
       justify-content: space-between;
       font-weight: 650;
       letter-spacing: 0.2px;
+      background: var(--panel);
     }
 
     #status {
@@ -184,18 +241,21 @@ function getWebviewHtml(): string {
 
     .bot {
       align-self: flex-start;
-      color: rgba(255,255,255,0.95);
+      color: var(--text);
       padding-left: 4px;
       width: 100%; 
     }
 
+    /* CODE BLOCK & DIFF */
     .code-wrapper {
-        background: #0d1117; 
+        background: var(--vscode-textBlockQuote-background);
         border: 1px solid var(--border);
         border-radius: 8px;
         overflow: hidden;
         margin: 10px 0;
         box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        display: flex;
+        flex-direction: column;
     }
 
     .code-header {
@@ -215,9 +275,9 @@ function getWebviewHtml(): string {
     }
 
     .review-btn {
-        background: #22c55e; /* Green for 'Apply' action */
-        color: #fff;
-        border: none;
+        background: rgba(125,211,252,0.95);
+        color: #071018;
+        border: 1px solid rgba(125,211,252,0.55);
         padding: 4px 12px;
         border-radius: 6px;
         font-size: 11px;
@@ -225,79 +285,64 @@ function getWebviewHtml(): string {
         cursor: pointer;
         transition: all 0.2s ease;
     }
-    
-    .review-btn:hover {
-        opacity: 0.9;
-        transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(34, 197, 94, 0.4);
-    }
+    .review-btn:hover { opacity: 0.9; transform: translateY(-1px); }
 
     .code-content {
-        padding: 12px;
+        padding: 0;
         font-family: 'Consolas', 'Courier New', monospace;
         font-size: 13px;
-        white-space: pre-wrap;
-        color: #e6edf3;
+        color: var(--text);
         overflow-x: auto;
+        white-space: pre; 
     }
 
-    .data-card {
-      background: var(--cardBg);
-      border: 1px solid var(--cardBorder);
-      border-radius: 8px;
-      padding: 12px;
-      margin: 8px 0;
-      font-family: 'Consolas', 'Courier New', monospace;
-      font-size: 13px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    .diff-line {
+        display: block;
+        padding: 0 12px;
+        min-height: 18px; 
+        line-height: 18px;
     }
+
+    /* ONLY highlight the changed lines */
+    .diff-highlight {
+        background-color: var(--diff-bg);
+        border-left: 3px solid var(--diff-border);
+        padding-left: 9px;
+    }
+    
+    .diff-ellipsis {
+        background: rgba(255,255,255,0.02);
+        color: var(--muted);
+        text-align: center;
+        font-size: 10px;
+        padding: 2px 0;
+        font-style: italic;
+        opacity: 0.7;
+    }
+    
+    .loading-diff { padding: 20px; color: var(--muted); text-align: center; font-style: italic; }
+    .data-card { background: rgba(30, 35, 45, 0.6); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
     .jira-row { display: flex; align-items: flex-start; margin-bottom: 8px; color: rgba(255,255,255,0.9); border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; }
-    .jira-row:last-child { border: none; margin-bottom: 0; }
     .jira-bullet { margin-right: 8px; color: var(--accent); font-weight: bold; }
-
     .confluence-row { display: flex; align-items: flex-start; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; }
-    .confluence-row:last-child { border: none; margin-bottom: 0; }
-    .confluence-bullet { margin-right: 8px; font-size: 1.1em; }
     .confluence-link { color: var(--accent); text-decoration: none; font-weight: 600; }
-    .confluence-link:hover { text-decoration: underline; }
-
     .slack-container { margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
-    .slack-container:last-child { border-bottom: none; margin-bottom: 0; }
     .slack-header { font-size: 0.9em; color: var(--accent); margin-bottom: 4px; font-weight: 700; opacity: 0.95; }
-    .slack-msg { color: rgba(255,255,255,0.85); white-space: pre-wrap; margin-left: 2px; }
     
     .banner { align-self: center; width: 100%; color: var(--accent); margin-bottom: 10px; opacity: 0.9; }
     .banner pre { font-family: 'Courier New', Courier, monospace; font-size: 5px; font-weight: bold; line-height: 1.1; white-space: pre; overflow-x: hidden; margin: 0; text-align: center; }
 
-    #composer {
-      padding: 12px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      gap: 10px;
-      background: rgba(0,0,0,0.12);
-    }
-
-    #input {
-      flex: 1;
-      height: 42px;
-      border-radius: 12px;
-      border: 1px solid var(--border2);
-      background: rgba(10, 12, 20, 0.65);
-      color: var(--text);
-      padding: 0 12px;
-      outline: none;
-    }
+    #composer { padding: 12px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: rgba(0,0,0,0.12); }
+    #input { flex: 1; height: 42px; border-radius: 12px; border: 1px solid var(--border2); background: rgba(10, 12, 20, 0.65); color: var(--text); padding: 0 12px; outline: none; }
     #input:focus { border-color: rgba(125,211,252,0.45); box-shadow: 0 0 0 3px rgba(125,211,252,0.15); }
     #send { height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(125,211,252,0.55); background: rgba(125,211,252,0.95); color: #071018; font-weight: 700; cursor: pointer; }
-    #send:active { transform: translateY(1px); }
   </style>
 </head>
 
 <body>
   <div id="chatRoot">
     <div id="header">
-      <div>NexHacks Agent</div>
-      <div id="status">idle</div>
+      <div>Context Co.</div> <div id="status">idle</div>
     </div>
     <div id="messages"></div>
     <div id="composer">
@@ -327,19 +372,103 @@ function getWebviewHtml(): string {
                 vscode.postMessage({
                     command: 'apply_file',
                     path: data.path,
-                    content: data.content
+                    content: data.content 
                 });
             }
         }
     });
 
+    // --- LISTEN FOR FILE CONTEXT ---
+    window.addEventListener('message', event => {
+        const message = event.data;
+        if (message.command === 'file_context') {
+            renderDiffView(message.id, message.content);
+        }
+    });
+
+    // --- RENDER DIFF ---
+    function renderDiffView(blockId, originalContent) {
+        const container = document.getElementById(blockId);
+        const wrapper = container.parentElement;
+        const filePath = wrapper.querySelector('.file-name').textContent;
+        
+        if (!container) return;
+
+        const newContent = window.codeBlockCache[blockId].content;
+        const oldLines = originalContent ? originalContent.split(/\\r?\\n/) : [];
+        const newLines = newContent.split(/\\r?\\n/);
+        
+        // 1. New File Handling
+        if (oldLines.length === 0) {
+            let html = '<div class="diff-ellipsis">... new file ...</div>';
+            newLines.forEach(l => {
+                html += \`<div class="diff-line diff-highlight">\${escapeHtml(l)}</div>\`;
+            });
+            container.innerHTML = html;
+            return;
+        }
+
+        // 2. Find Start of Change
+        let startDiff = 0;
+        const limit = Math.min(oldLines.length, newLines.length);
+        while (startDiff < limit && oldLines[startDiff] === newLines[startDiff]) {
+            startDiff++;
+        }
+
+        // 3. Find End of Change
+        let endDiffNew = newLines.length - 1;
+        let endDiffOld = oldLines.length - 1;
+        while (endDiffNew >= startDiff && endDiffOld >= startDiff && 
+               newLines[endDiffNew] === oldLines[endDiffOld]) {
+            endDiffNew--;
+            endDiffOld--;
+        }
+
+        // 4. Send "Highlight" command to VS Code Editor (Real-time feedback)
+        // We highlight the lines in the OLD file that are being replaced/modified.
+        vscode.postMessage({
+            command: 'highlight_editor',
+            path: filePath,
+            startLine: startDiff,
+            endLine: endDiffOld
+        });
+
+        // 5. Render HTML for Chat
+        if (startDiff > endDiffNew) {
+             container.innerHTML = '<div class="loading-diff">No visible changes detected.</div>';
+             return;
+        }
+
+        const showStart = Math.max(0, startDiff - 2);
+        const showEnd = Math.min(newLines.length - 1, endDiffNew + 2);
+
+        let html = "";
+        if (showStart > 0) html += '<div class="diff-ellipsis">...</div>';
+
+        for (let i = showStart; i <= showEnd; i++) {
+            // Strictly highlight ONLY changed lines (not context)
+            const isChanged = (i >= startDiff && i <= endDiffNew);
+            const className = isChanged ? "diff-line diff-highlight" : "diff-line";
+            const content = newLines[i] === "" ? "&nbsp;" : escapeHtml(newLines[i]);
+            html += \`<div class="\${className}">\${content}</div>\`;
+        }
+
+        if (showEnd < newLines.length - 1) html += '<div class="diff-ellipsis">...</div>';
+        container.innerHTML = html;
+    }
+
+    function escapeHtml(text) {
+        if (!text) return "";
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
     const BANNER_ART = \`
-  ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗
- ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝
- ██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║   
- ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║   
- ╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║   
-  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   \`;
+  ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗     ██████╗ ██████╗       
+ ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝    ██╔════╝██╔═══██╗      
+ ██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║       ██║     ██║   ██║      
+ ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║       ██║     ██║   ██║      
+ ╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║       ╚██████╗╚██████╔╝   ██╗
+  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝        ╚═════╝ ╚═════╝    ╚═╝\`;
 
     function setStatus(s) { statusEl.textContent = s; }
 
@@ -362,7 +491,7 @@ function getWebviewHtml(): string {
     function extractValue(line, key) {
         const parts = line.split("|");
         for (const part of parts) {
-            const trimmed = part.trim();
+            const trimmed = part.replace(/[\*_]/g, "").trim();;
             if (trimmed.toLowerCase().startsWith(key.toLowerCase())) {
                 return trimmed.substring(key.length).replace(/^:/, "").trim();
             }
@@ -373,7 +502,6 @@ function getWebviewHtml(): string {
     function formatDataContent(rawText) {
         const cleanText = rawText.replace(/\\*\\*/g, ""); 
         const lines = cleanText.split('\\n');
-        
         let htmlOutput = "";
         let foundData = false;
 
@@ -386,7 +514,7 @@ function getWebviewHtml(): string {
                  foundData = true;
                  const title = extractValue(line, "Title") || "Untitled Page";
                  const link = extractValue(line, "Link") || "#";
-                 htmlOutput += \`<div class="confluence-row"><span class="confluence-bullet">📄</span><span><a href="\${link}" class="confluence-link">\${title}</a></span></div>\`;
+                 htmlOutput += \`<div class="confluence-row"><span class="confluence-link">\${title}</span></div>\`;
                  continue;
             }
             if (line.includes("Summary:") && (line.includes("Ticket:") || line.includes("Status:"))) {
@@ -410,11 +538,8 @@ function getWebviewHtml(): string {
             }
         }
 
-        if (foundData) {
-            return \`<div class="data-card">\${htmlOutput}</div>\`;
-        } else {
-            return rawText.replace(/</g, "&lt;").replace(/\\n/g, "<br>");
-        }
+        if (foundData) return \`<div class="data-card">\${htmlOutput}</div>\`;
+        else return rawText.replace(/</g, "&lt;").replace(/\\n/g, "<br>");
     }
 
     function parseMarkdown(text) {
@@ -424,37 +549,22 @@ function getWebviewHtml(): string {
 
       for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
-
           if (part.startsWith("\`\`\`")) {
               const content = part.slice(3, -3).replace(/^\\w+\\n/, ""); 
-              
               if (nextFileContext) {
                   const blockId = "block_" + Math.random().toString(36).substr(2, 9);
-                  window.codeBlockCache[blockId] = {
-                      path: nextFileContext,
-                      content: content
-                  };
-
-                  html += \`
-                  <div class="code-wrapper">
-                    <div class="code-header">
-                        <span class="file-name">\${nextFileContext}</span>
-                        <button class="review-btn" data-id="\${blockId}">Apply to File</button>
-                    </div>
-                    <div class="code-content">\${content.replace(/</g, "&lt;")}</div>
-                  </div>\`;
-                  
+                  window.codeBlockCache[blockId] = { path: nextFileContext, content: content };
+                  html += \`<div class="code-wrapper"><div class="code-header"><span class="file-name">\${nextFileContext}</span><button class="review-btn" data-id="\${blockId}">Apply to File</button></div><div id="\${blockId}" class="code-content"><div class="loading-diff">Analyzing changes...</div></div></div>\`;
+                  vscode.postMessage({ command: 'get_file_context', path: nextFileContext, id: blockId });
                   nextFileContext = null; 
               } else {
                   html += formatDataContent(content); 
               }
-          } 
-          else {
+          } else {
               const fileMatch = part.match(/### FILE: (.*?)\\s*$/);
               if (fileMatch) {
                   nextFileContext = fileMatch[1].trim();
-                  const textWithoutHeader = part.substring(0, fileMatch.index);
-                  html += textWithoutHeader.replace(/</g, "&lt;").replace(/\\n/g, "<br>");
+                  html += part.substring(0, fileMatch.index).replace(/</g, "&lt;").replace(/\\n/g, "<br>");
               } else {
                   html += part.replace(/</g, "&lt;").replace(/\\n/g, "<br>");
               }
@@ -467,12 +577,10 @@ function getWebviewHtml(): string {
       if (isGenerating) return; 
       const text = inputEl.value.trim();
       if (!text) return;
-
       inputEl.value = "";
       const userDiv = createMsgDiv("me");
       userDiv.textContent = text;
       messagesEl.scrollTop = messagesEl.scrollHeight;
-      
       setStatus("thinking...");
       isGenerating = true;
 
@@ -482,12 +590,10 @@ function getWebviewHtml(): string {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: text })
         });
-
         if (!res.ok) throw new Error("Backend Error " + res.status);
 
         const botDiv = createMsgDiv("bot");
         setStatus("generating...");
-
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let fullText = "";
