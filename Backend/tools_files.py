@@ -5,7 +5,7 @@ IGNORE_DIRS = {'.git', '__pycache__', 'venv', 'env', '.idea', '.vscode', 'node_m
 IGNORE_FILES = {'.DS_Store', '.env', 'package-lock.json', 'poetry.lock'}
 MAX_FILE_SIZE = 20000 # Skip huge files to save context
 
-def list_files(directory: str = ".") -> dict:
+def list_files(directory: str = r"C:\Users\priya\NexHacks26\\Backend") -> dict:
     """
     Lists files in the directory so the agent knows the structure.
     """
@@ -22,7 +22,7 @@ def list_files(directory: str = ".") -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-def read_all_code_files(directory: str = ".") -> dict:
+def read_all_code_files(directory: str = r"C:\Users\priya\NexHacks26\\Backend") -> dict:
     """
     POWER TOOL: Reads the content of ALL text-based files in the directory at once.
     Use this when you need to understand the codebase, find where a feature is implemented,

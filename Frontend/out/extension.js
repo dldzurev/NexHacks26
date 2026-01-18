@@ -59,9 +59,10 @@ class NexHacksChatViewProvider {
 }
 function getWebviewHtml() {
     const nonce = String(Math.random()).slice(2);
+    // CSP: Allows external images (for user avatars if needed) and local server connection
     const csp = [
         "default-src 'none';",
-        "img-src data:;",
+        "img-src data: https:;",
         "style-src 'unsafe-inline';",
         `script-src 'nonce-${nonce}';`,
         "connect-src http://127.0.0.1:8000 http://localhost:8000;"
@@ -82,13 +83,11 @@ function getWebviewHtml() {
       --border2: rgba(255,255,255,0.14);
       --text: rgba(255,255,255,0.92);
       --muted: rgba(255,255,255,0.70);
-
-      /* User Bubble (Blueish) */
       --accent: #7dd3fc;
       --accentBg: rgba(125,211,252,0.18);
       --accentBorder: rgba(125,211,252,0.35);
-
-      /* Data Card (The Grey Box) */
+      
+      /* Grey Data Box */
       --cardBg: rgba(30, 35, 45, 0.6);
       --cardBorder: rgba(255, 255, 255, 0.15);
     }
@@ -153,6 +152,7 @@ function getWebviewHtml() {
       background-clip: padding-box;
     }
 
+    /* Message Bubbles */
     .msg {
       max-width: 90%;
       font-size: 14px;
@@ -175,7 +175,7 @@ function getWebviewHtml() {
       padding-left: 4px;
     }
 
-    /* THE GREY BOX */
+    /* THE GREY DATA BOX */
     .data-card {
       background: var(--cardBg);
       border: 1px solid var(--cardBorder);
@@ -187,38 +187,51 @@ function getWebviewHtml() {
       box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
 
-    /* CUSTOM FORMATTING STYLES */
-    
-    /* Jira: Simple Bullet */
+    /* --- JIRA STYLING --- */
     .jira-row {
         display: flex;
         align-items: flex-start;
-        margin-bottom: 6px;
+        margin-bottom: 8px;
         color: rgba(255,255,255,0.9);
-    }
-    .jira-bullet { margin-right: 8px; color: var(--accent); }
-
-    /* Slack: User/Header + Message Body */
-    .slack-container {
-        margin-bottom: 12px;
-        padding-bottom: 8px;
         border-bottom: 1px solid rgba(255,255,255,0.05);
+        padding-bottom: 6px;
+    }
+    .jira-row:last-child { border: none; margin-bottom: 0; }
+    .jira-bullet { margin-right: 8px; color: var(--accent); font-weight: bold; }
+
+    /* --- CONFLUENCE STYLING --- */
+    .confluence-row {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 8px;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+        padding-bottom: 6px;
+    }
+    .confluence-row:last-child { border: none; margin-bottom: 0; }
+    .confluence-bullet { margin-right: 8px; font-size: 1.1em; }
+    .confluence-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .confluence-link:hover { text-decoration: underline; }
+
+    /* --- SLACK STYLING --- */
+    .slack-container {
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
     }
     .slack-container:last-child { border-bottom: none; margin-bottom: 0; }
-
-    .slack-header {
-        font-size: 0.85em;
-        color: var(--accent);
-        margin-bottom: 4px;
-        font-weight: 600;
-        opacity: 0.9;
+    .slack-header { 
+        font-size: 0.9em; 
+        color: var(--accent); 
+        margin-bottom: 4px; 
+        font-weight: 700; 
+        opacity: 0.95; 
     }
-    .slack-msg {
-        color: rgba(255,255,255,0.85);
-        white-space: pre-wrap;
+    .slack-msg { 
+        color: rgba(255,255,255,0.85); 
+        white-space: pre-wrap; 
+        margin-left: 2px; 
     }
     
-    /* Banner */
     .banner {
         align-self: center;
         width: 100%;
@@ -286,7 +299,7 @@ function getWebviewHtml() {
     <div id="messages"></div>
 
     <div id="composer">
-      <input id="input" placeholder="Ask about Jira, Slack, or Code..." />
+      <input id="input" placeholder="Search Jira, Slack, or Confluence..." />
       <button id="send">Send</button>
     </div>
   </div>
@@ -301,29 +314,21 @@ function getWebviewHtml() {
 
     let isGenerating = false;
 
+// --- ASCII ART BANNER (CLEAN & BORDERLESS) ---
     const BANNER_ART = \`
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║  ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗ ║
-║ ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝ ║
-║ ██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║    ║
-║ ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║    ║
-║ ╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║    ║
-║  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝    ║
-║                                                               ║
-║          ██████╗  █████                                       ║
-║         ██╔═══   ██╔══██╗                                     ║
-║         ██║      ██║  ██║                                     ║
-║         ██║      ██║  ██║                                     ║
-║         ╚██████   ██████                                      ║
-║          ╚═════╝  ╚════╝                                      ║
-║                                                               ║
-║ ╔═══════════════════════════════════════════════════════════╗ ║
-║ ║      🧠 AI-Powered Context Assistant                      ║ ║
-║ ║      🔗 Connect | Search | Understand                     ║ ║
-║ ╚═══════════════════════════════════════════════════════════╝ ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝\`;
+  ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗
+ ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝
+ ██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║   
+ ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║   
+ ╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║   
+  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   
+
+          ██████╗  ██████╗                                   
+         ██╔════╝ ██╔═══██╗                                  
+         ██║      ██║   ██║                                  
+         ██║      ██║   ██║                                   
+         ╚██████╗ ╚██████╔╝    ██╗                            
+          ╚═════╝  ╚═════╝     ╚═╝                            \`;
 
     function setStatus(s) { statusEl.textContent = s; }
 
@@ -343,101 +348,124 @@ function getWebviewHtml() {
       messagesEl.appendChild(d);
     }
 
-    // --- STRICT DATA FORMATTER ---
+    // --- HELPER TO SAFELY EXTRACT VALUES FROM "KEY: VALUE | KEY2: VALUE" ---
+    function extractValue(line, key) {
+        // Looks for "Key:" followed by anything until "|" or end of line
+        const parts = line.split("|");
+        for (const part of parts) {
+            const trimmed = part.trim();
+            // Allow sloppy matching (case insensitive, optional colon)
+            if (trimmed.toLowerCase().startsWith(key.toLowerCase())) {
+                // Return everything after the key (and colon if present)
+                return trimmed.substring(key.length).replace(/^:/, "").trim();
+            }
+        }
+        return null;
+    }
+
+    // --- FAIL-SAFE DATA FORMATTER ---
     function formatDataContent(rawText) {
-        // Remove all markdown bolding (**text**) globally first
+        // Remove markdown formatting like **bold**
         const cleanText = rawText.replace(/\\*\\*/g, ""); 
-        
         const lines = cleanText.split('\\n');
+        
         let htmlOutput = "";
         let foundData = false;
 
-        lines.forEach(line => {
-            if (!line.trim()) return;
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+            if (!line) continue;
 
-            // 1. JIRA MATCH
-            // Pattern in tools_jira.py: "Ticket: KEY | Status: STATUS | Summary: TEXT | Link: URL"
-            // We want to extract Status and Summary only.
-            // Regex explanation:
-            // Ticket:.*?Status:\\s*([^|]+)  -> Capture Status (Group 1)
-            // .*?Summary:\\s*([^|]+)       -> Capture Summary (Group 2)
-            const jiraRegex = /Ticket:.*?Status:\s*([^|]+).*?Summary:\s*([^|]+)/i;
-            const jiraMatch = line.match(jiraRegex);
-            
-            if (jiraMatch) {
+            // Remove bullets provided by the backend so we don't double up
+            line = line.replace(/^[-*•]\\s+/, "");
+
+            // 1. CONFLUENCE DETECTION
+            // Pattern: "Page ID: ... | Title: ... | Link: ..."
+            if (line.includes("Page ID:") && line.includes("Title:")) {
+                 foundData = true;
+                 const title = extractValue(line, "Title") || "Untitled Page";
+                 const link = extractValue(line, "Link") || "#";
+
+                 htmlOutput += \`
+                 <div class="confluence-row">
+                    <span class="confluence-bullet">📄</span>
+                    <span><a href="\${link}" class="confluence-link">\${title}</a></span>
+                 </div>\`;
+                 continue;
+            }
+
+            // 2. JIRA DETECTION
+            // Pattern: "Ticket: ... | Status: ... | Summary: ..."
+            if (line.includes("Summary:") && (line.includes("Ticket:") || line.includes("Status:"))) {
                 foundData = true;
-                const status = jiraMatch[1].trim();
-                const summary = jiraMatch[2].trim();
+                const summary = extractValue(line, "Summary") || "No Summary";
+                const status = extractValue(line, "Status") || "Unknown";
                 
-                // Requested Format: "- Summary - Status"
                 htmlOutput += \`
                 <div class="jira-row">
                     <span class="jira-bullet">-</span>
                     <span>\${summary} - \${status}</span>
                 </div>\`;
-                return;
+                continue;
             }
 
-            // 2. SLACK MATCH
-            // Pattern in tools_slack.py: "[TIME] Channel: #CH | User: NAME | Msg: TEXT"
-            // We want: NAME #CH TIME \n TEXT
-            // Regex explanation:
-            // \\[([^\]]+)\\]             -> Capture Time (Group 1)
-            // .*?Channel:\\s*([^|]+)     -> Capture Channel (Group 2)
-            // .*?User:\\s*([^|]+)        -> Capture User (Group 3)
-            // .*?Msg:\\s*(.*)            -> Capture Message (Group 4)
-            const slackRegex = /\\[([^\]]+)\\].*?Channel:\s*([^|]+).*?User:\s*([^|]+).*?Msg:\s*(.*)/i;
-            const slackMatch = line.match(slackRegex);
-            
-            if (slackMatch) {
+            // 3. SLACK DETECTION
+            // Pattern: "User: ... | Msg: ... | Channel: ..."
+            // OR Pattern: "[Time] Channel: ... | User: ... | Msg: ..."
+            if (line.includes("Msg:") && line.includes("User:")) {
                 foundData = true;
-                const time = slackMatch[1].trim();
-                const channel = slackMatch[2].trim();
-                const user = slackMatch[3].trim();
-                const msg = slackMatch[4].trim();
+                
+                // Extract Time: Look for [TIMESTAMP] at start
+                let time = "";
+                const timeMatch = line.match(/\\[(.*?)\\]/);
+                if (timeMatch) time = timeMatch[1];
 
-                // Requested Format: "User #Channel Time <newline> Message"
+                const user = extractValue(line, "User") || "Unknown User";
+                const msg = extractValue(line, "Msg") || "";
+                
+                // Extract Channel safely
+                let channel = extractValue(line, "Channel") || "";
+                channel = channel.replace('#', ''); // Clean hash if exists
+
                 htmlOutput += \`
                 <div class="slack-container">
-                    <div class="slack-header">\${user} #\${channel} \${time}</div>
+                    <div class="slack-header">\${user} \${channel ? '#' + channel : ''} \${time}</div>
                     <div class="slack-msg">\${msg}</div>
                 </div>\`;
-                return;
+                continue;
             }
-        });
+        }
 
-        // If we found valid data rows, return them.
-        // If we found NO data rows (just "Here is the list..."), return EMPTY STRING.
-        // This effectively hides the "extra text from you".
+        // Only return the formatted HTML if we actually found structured data.
         if (foundData) {
             return htmlOutput;
         } else {
-            // Fallback: If it's code but not our specific formats, just print it plain
-            // but strip the first line if it's generic conversational text.
-            return rawText.replace(/</g, "&lt;");
+            // Fallback: This wasn't one of our known data types.
+            // Escape HTML and return plain text (preserving structure)
+            return rawText.replace(/</g, "&lt;").replace(/\\n/g, "<br>");
         }
     }
 
     function parseMarkdown(text) {
-      // 1. Separate code blocks from normal text
+      // Split content by code blocks: \`\`\` ... \`\`\`
       const parts = text.split(/(\`\`\`[\\s\\S]*?\`\`\`)/g);
 
       return parts.map(part => {
         if (part.startsWith("\`\`\`")) {
-             // Remove backticks
+             // Remove the backticks (start and end)
              const content = part.slice(3, -3);
              
-             // Run our strict formatter
+             // Run the formatter
              const formatted = formatDataContent(content);
              
-             // Only render the grey box if there is actual content
-             if (formatted.trim().length > 0 && formatted.includes("div")) {
+             // Ensure we don't render empty grey boxes
+             if (formatted.trim().length > 0) {
                  return \`<div class="data-card">\${formatted}</div>\`;
              } else {
-                 return ""; // Hide empty/irrelevant code blocks
+                 return ""; 
              }
         } else {
-             // Conversational text (outside grey box)
+             // Normal conversational text -> Plain text
              return part
                 .replace(/</g, "&lt;")
                 .replace(/\\n/g, "<br>");
@@ -482,6 +510,7 @@ function getWebviewHtml() {
           const chunk = decoder.decode(value, { stream: true });
           fullText += chunk;
           
+          // Re-render full message on every chunk
           botDiv.innerHTML = parseMarkdown(fullText);
           messagesEl.scrollTop = messagesEl.scrollHeight;
         }
@@ -503,10 +532,11 @@ function getWebviewHtml() {
       if (e.key === "Enter") sendMessage(); 
     });
 
+    // Start
     addBanner();
     setTimeout(() => {
         const welcomeDiv = createMsgDiv("bot");
-        welcomeDiv.textContent = "System Ready. Ask me to 'Search Jira' or 'Find Slack messages'.";
+        welcomeDiv.textContent = "System Ready. Ask me to 'Search Jira', 'Find Slack messages', or 'Search Confluence'.";
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }, 500);
 
