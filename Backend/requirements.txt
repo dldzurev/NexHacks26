@@ -1,5 +1,26 @@
+# Backend requirements for NexHacks26
+# Core web framework
 fastapi
-uvicorn
+
+# Recommended uvicorn extras for production/dev (websockets, httptools)
+uvicorn[standard]
+
+# Dotenv support for local environment variables
 python-dotenv
+
+# Console colors (used in some scripts)
 colorama
+
+# Google Generative AI client used in brain.py
+google-generative-ai
+
+# Jira client used by tools_jira.py
+jira
+
+# Slack SDK used by tools_slack.py and slack.py
+slack-sdk
+
+# HTTP client libs (requests commonly used; httpx may be required by some code)
+requests
+httpx
 
